@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 5 npx tsx src/server.ts 2>&1 || true)",
+      "Bash(timeout 5 npx tsx --env-file=.env src/server.ts 2>&1 || true)",
+      "Skill(claude-api)",
+      "Bash(npx:*)",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(npm list:*)",
+      "Bash(timeout:*)"
+    ]
+  }
+}

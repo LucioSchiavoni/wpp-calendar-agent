@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Business {
+  id               String         @id @default(uuid())
+  name             String
+  phone            String         @unique
+  calendarId       String
+  timezone         String
+  welcomeMessage   String
+  services         Json
+  workingHours     Json
+  escalationPhone  String?
+  active           Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  conversations    Conversation[]
+  appointments     Appointment[]
+}
+
+model Conversation {
+  id             String        @id @default(uuid())
+  businessId     String
+  customerPhone  String
+  status         ConversationStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  business       Business      @relation(fields: [businessId], references: [id])
+  messages       Message[]
+  appointments   Appointment[]
+
+  @@unique([businessId, customerPhone])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  role           MessageRole
+  content        String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+}
+
+model Appointment {
+  id             String            @id @default(uuid())
+  businessId     String
+  conversationId String
+  customerPhone  String
+  customerName   String
+  service        String
+  startTime      DateTime
+  endTime        DateTime
+  status         AppointmentStatus @default(PENDING)
+  googleEventId  String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  business       Business          @relation(fields: [businessId], references: [id])
+  conversation   Conversation      @relation(fields: [conversationId], references: [id])
+}
+
+enum ConversationStatus {
+  ACTIVE
+  CLOSED
+  ESCALATED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}

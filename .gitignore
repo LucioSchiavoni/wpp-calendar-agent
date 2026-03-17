@@ -1,0 +1,17 @@
+
+.env
+.env.example
+
+
+/generated/prisma
+
+
+/frontend-demo/.env.local
+
+/node_modules 
+
+
+api-claude.md
+
+CLAUDE.md
+roadmap.md
