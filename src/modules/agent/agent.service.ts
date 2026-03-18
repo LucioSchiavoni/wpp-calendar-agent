@@ -11,6 +11,7 @@ import { conversationService } from "@/modules/conversation/conversation.service
 import { businessService } from "@/modules/business/business.service.js";
 import { agentTools } from "@/modules/agent/agent.tools.js";
 import { buildSystemPrompt } from "@/modules/agent/agent.prompt.js";
+import { calendarService } from "@/modules/calendar/calendar.service.js";
 
 interface ProcessMessageInput {
   customerPhone: string;
@@ -49,24 +50,60 @@ async function executeCheckAvailability(
   const services = ctx.business.services as unknown as Service[];
   const workingHours = ctx.business.workingHours as unknown as WorkingHour[];
 
-  const [year, month, day] = input.date.split("-").map(Number);
-  const targetDate = new Date(year, month - 1, day);
-  const dayOfWeek = targetDate.getDay();
-
-  const schedule = workingHours.find((h) => h.day === dayOfWeek);
-  if (!schedule) {
-    return JSON.stringify({
-      available: false,
-      message: "El negocio no atiende ese día.",
-    });
-  }
-
   const service = input.service_name
     ? services.find(
         (s) => s.name.toLowerCase() === input.service_name!.toLowerCase()
       )
     : null;
   const duration = service?.duration_minutes ?? 30;
+
+  let slots: string[];
+
+  const useCalendar =
+    calendarService.isConfigured() && !!ctx.business.calendarId;
+
+  if (useCalendar) {
+    try {
+      slots = await calendarService.getAvailableSlots(
+        ctx.business.calendarId,
+        input.date,
+        duration,
+        workingHours
+      );
+    } catch {
+      slots = await getAvailableSlotsFromDb(input.date, duration, workingHours, ctx);
+    }
+  } else {
+    slots = await getAvailableSlotsFromDb(input.date, duration, workingHours, ctx);
+  }
+
+  if (slots.length === 0) {
+    return JSON.stringify({
+      available: false,
+      message: "No hay turnos disponibles para ese día.",
+    });
+  }
+
+  return JSON.stringify({
+    available: true,
+    date: input.date,
+    slots,
+    duration_minutes: duration,
+  });
+}
+
+async function getAvailableSlotsFromDb(
+  date: string,
+  duration: number,
+  workingHours: WorkingHour[],
+  ctx: ToolContext
+): Promise<string[]> {
+  const [year, month, day] = date.split("-").map(Number);
+  const targetDate = new Date(year, month - 1, day);
+  const dayOfWeek = targetDate.getDay();
+
+  const schedule = workingHours.find((h) => h.day === dayOfWeek);
+  if (!schedule) return [];
 
   const startOfDay = new Date(year, month - 1, day, 0, 0, 0);
   const endOfDay = new Date(year, month - 1, day, 23, 59, 59);
@@ -103,19 +140,7 @@ async function executeCheckAvailability(
     current = new Date(current.getTime() + duration * 60 * 1000);
   }
 
-  if (slots.length === 0) {
-    return JSON.stringify({
-      available: false,
-      message: "No hay turnos disponibles para ese día.",
-    });
-  }
-
-  return JSON.stringify({
-    available: true,
-    date: input.date,
-    slots,
-    duration_minutes: duration,
-  });
+  return slots;
 }
 
 async function executeCreateAppointment(
@@ -144,6 +169,21 @@ async function executeCreateAppointment(
     startTime.getTime() + service.duration_minutes * 60 * 1000
   );
 
+  let googleEventId: string | undefined;
+
+  if (calendarService.isConfigured() && ctx.business.calendarId) {
+    try {
+      googleEventId = await calendarService.createEvent(ctx.business.calendarId, {
+        title: `${service.name} - ${input.customer_name}`,
+        start: startTime,
+        end: endTime,
+        description: `Turno agendado por WhatsApp. Teléfono: ${input.customer_phone}`,
+      });
+    } catch {
+      // Calendar event creation failed — appointment is still saved in DB
+    }
+  }
+
   const appointment = await prisma.appointment.create({
     data: {
       businessId: ctx.business.id,
@@ -154,6 +194,7 @@ async function executeCreateAppointment(
       startTime,
       endTime,
       status: AppointmentStatus.CONFIRMED,
+      googleEventId: googleEventId ?? null,
     },
   });
 
@@ -194,6 +235,18 @@ async function executeCancelAppointment(
     where: { id: input.appointment_id },
     data: { status: AppointmentStatus.CANCELLED },
   });
+
+  if (
+    appointment.googleEventId &&
+    calendarService.isConfigured() &&
+    ctx.business.calendarId
+  ) {
+    try {
+      await calendarService.deleteEvent(ctx.business.calendarId, appointment.googleEventId);
+    } catch {
+      // Calendar event deletion failed — appointment is still cancelled in DB
+    }
+  }
 
   return JSON.stringify({
     success: true,

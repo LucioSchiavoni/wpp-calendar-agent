@@ -6,6 +6,7 @@ import { Readable } from "stream";
 import { env } from "@/config/env.js";
 import { chatRoutes } from "@/web/chat.routes.js";
 import { whatsappRoutes } from "@/modules/whatsapp/whatsapp.handler.js";
+import { authRoutes } from "@/web/auth.routes.js";
 import "@/queue/worker.js";
 
 export async function buildServer() {
@@ -52,6 +53,7 @@ export async function buildServer() {
   app.get("/health", async () => ({ status: "ok" }));
   await app.register(chatRoutes);
   await app.register(whatsappRoutes);
+  await app.register(authRoutes);
 
   return app;
 }
