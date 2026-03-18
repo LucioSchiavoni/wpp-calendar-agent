@@ -40,7 +40,6 @@ export const whatsappService: IWhatsappService = {
   },
 
   verifySignature(rawBody, signature) {
-    if (!env.WHATSAPP_APP_SECRET) return true;
     const expected = `sha256=${crypto
       .createHmac("sha256", env.WHATSAPP_APP_SECRET)
       .update(rawBody)

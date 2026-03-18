@@ -1,6 +1,6 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { Tool } from "@anthropic-ai/sdk/resources/messages.js";
 
-export const agentTools: Anthropic.Tool[] = [
+export const agentTools: Tool[] = [
   {
     name: "check_availability",
     description:

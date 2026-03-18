@@ -4,6 +4,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   ANTHROPIC_API_KEY: z.string().min(1),
+  AI_MODEL: z.string().min(1).default("claude-sonnet-4-5"),
   GOOGLE_CLIENT_ID: z.string().optional().or(z.literal("")),
   GOOGLE_CLIENT_SECRET: z.string().optional().or(z.literal("")),
   GOOGLE_REDIRECT_URI: z.string().url().optional().or(z.literal("")),
@@ -15,7 +16,9 @@ const envSchema = z.object({
   WHATSAPP_VERIFY_TOKEN: z.string().min(1),
   WHATSAPP_ACCESS_TOKEN: z.string().min(1),
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
-  WHATSAPP_APP_SECRET: z.string().optional(),
+  WHATSAPP_APP_SECRET: z.string().min(1),
+  ADMIN_API_KEY: z.string().min(32),
+  GOOGLE_REFRESH_TOKEN: z.string().optional().or(z.literal("")),
 });
 
 const parsed = envSchema.safeParse(process.env);

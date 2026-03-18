@@ -52,6 +52,10 @@ function createOAuth2Client() {
 }
 
 async function loadTokens(client: InstanceType<typeof google.auth.OAuth2>): Promise<void> {
+  if (env.GOOGLE_REFRESH_TOKEN) {
+    client.setCredentials({ refresh_token: env.GOOGLE_REFRESH_TOKEN });
+    return;
+  }
   try {
     const raw = await fs.readFile(TOKENS_PATH, "utf-8");
     const tokens = JSON.parse(raw) as Credentials;
@@ -62,7 +66,9 @@ async function loadTokens(client: InstanceType<typeof google.auth.OAuth2>): Prom
 }
 
 async function saveTokens(tokens: Credentials): Promise<void> {
+  if (env.GOOGLE_REFRESH_TOKEN) return;
   await fs.writeFile(TOKENS_PATH, JSON.stringify(tokens, null, 2), "utf-8");
+  await fs.chmod(TOKENS_PATH, 0o600);
 }
 
 async function getAuthenticatedClient() {

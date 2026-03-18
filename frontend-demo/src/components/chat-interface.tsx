@@ -30,6 +30,7 @@ export function ChatInterface({ businessId, businessName, businessServices, welc
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string>("");
+  const [serviceSelected, setServiceSelected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [sendAnimating, setSendAnimating] = useState(false);
@@ -59,6 +60,7 @@ export function ChatInterface({ businessId, businessName, businessServices, welc
     );
     setInput("");
     setIsTyping(false);
+    setServiceSelected(false);
   }, [welcomeMessage]);
 
   const scrollToBottom = useCallback(() => {
@@ -74,13 +76,8 @@ export function ChatInterface({ businessId, businessName, businessServices, welc
     scrollToBottom();
   }, [messages, isTyping, scrollToBottom]);
 
-  const sendMessage = useCallback(async () => {
-    const content = input.trim();
+  const sendMessageContent = useCallback(async (content: string) => {
     if (!content || isTyping || !sessionId) return;
-
-    setInput("");
-    setSendAnimating(true);
-    setTimeout(() => setSendAnimating(false), 300);
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -136,7 +133,21 @@ export function ChatInterface({ businessId, businessName, businessServices, welc
     } finally {
       setIsTyping(false);
     }
-  }, [input, isTyping, sessionId, businessId]);
+  }, [isTyping, sessionId, businessId]);
+
+  const sendMessage = useCallback(async () => {
+    const content = input.trim();
+    if (!content) return;
+    setInput("");
+    setSendAnimating(true);
+    setTimeout(() => setSendAnimating(false), 300);
+    await sendMessageContent(content);
+  }, [input, sendMessageContent]);
+
+  const handleServiceSelect = useCallback(async (service: { name: string; duration_minutes: number; price: number }) => {
+    setServiceSelected(true);
+    await sendMessageContent(`Quiero agendar: ${service.name}`);
+  }, [sendMessageContent]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -237,6 +248,35 @@ export function ChatInterface({ businessId, businessName, businessServices, welc
 
         <div className="h-2" />
       </div>
+
+      <AnimatePresence>
+        {!serviceSelected && businessServices.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.2 }}
+            className="flex-shrink-0 bg-[#17212b] border-t border-[#1f2d3d] px-3 pt-3 pb-1"
+          >
+            <p className="text-[11px] text-[#8b9ab1] mb-2 px-1">¿Qué servicio necesitás?</p>
+            <div className="flex flex-wrap gap-2">
+              {businessServices.map((s) => (
+                <motion.button
+                  key={s.name}
+                  onClick={() => handleServiceSelect(s)}
+                  disabled={isTyping}
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="flex flex-col items-start px-3 py-2 rounded-xl bg-[#1f2d3d] border border-[#2b3f55] text-left hover:border-[#2b5278] hover:bg-[#243347] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <span className="text-[#e8eaed] text-xs font-medium leading-tight">{s.name}</span>
+                  <span className="text-[#8b9ab1] text-[10px] mt-0.5">${s.price} · {s.duration_minutes} min</span>
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex-shrink-0 bg-[#17212b] border-t border-[#1f2d3d] px-3 py-3">
         <div className="flex items-end gap-2">

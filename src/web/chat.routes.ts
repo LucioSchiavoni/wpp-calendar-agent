@@ -1,7 +1,18 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { agentService } from "@/modules/agent/agent.service.js";
 import { businessService } from "@/modules/business/business.service.js";
+import { env } from "@/config/env.js";
+
+function requireAdminKey(request: FastifyRequest, reply: FastifyReply): boolean {
+  const auth = request.headers["authorization"] ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (token !== env.ADMIN_API_KEY) {
+    reply.status(401).send({ error: "Unauthorized" });
+    return false;
+  }
+  return true;
+}
 
 const chatBodySchema = z.object({
   businessId: z.string().uuid(),
@@ -93,7 +104,23 @@ export async function chatRoutes(app: FastifyInstance) {
     });
   });
 
+  app.get("/api/business/:id/services", async (request, reply) => {
+    const parsed = businessParamsSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+
+    const business = await businessService.getById(parsed.data.id);
+    if (!business || !business.active) {
+      return reply.status(404).send({ error: "Business not found" });
+    }
+
+    return reply.send({ services: business.services });
+  });
+
   app.post("/api/business", async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+
     const parsed = createBusinessSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.flatten() });
@@ -104,6 +131,8 @@ export async function chatRoutes(app: FastifyInstance) {
   });
 
   app.put("/api/business/:id", async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+
     const paramsParsed = businessParamsSchema.safeParse(request.params);
     if (!paramsParsed.success) {
       return reply.status(400).send({ error: paramsParsed.error.flatten() });
@@ -126,7 +155,9 @@ export async function chatRoutes(app: FastifyInstance) {
     return reply.send({ id: updated.id });
   });
 
-  app.post("/api/business/seed", async (_request, reply) => {
+  app.post("/api/business/seed", async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+
     const business = await businessService.seed();
     return reply.send({ id: business.id, name: business.name });
   });

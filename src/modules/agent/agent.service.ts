@@ -1,10 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
 import {
   AppointmentStatus,
   ConversationStatus,
   MessageRole,
   type Business,
 } from "@prisma/client";
+import Anthropic from "@anthropic-ai/sdk";
+import type { MessageParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { prisma } from "@/lib/prisma.js";
 import { env } from "@/config/env.js";
 import { conversationService } from "@/modules/conversation/conversation.service.js";
@@ -12,6 +13,62 @@ import { businessService } from "@/modules/business/business.service.js";
 import { agentTools } from "@/modules/agent/agent.tools.js";
 import { buildSystemPrompt } from "@/modules/agent/agent.prompt.js";
 import { calendarService } from "@/modules/calendar/calendar.service.js";
+import { logger } from "@/lib/logger.js";
+import { z } from "zod";
+
+const customerPhoneSchema = z
+  .string()
+  .regex(/^09\d{7}$/, "El número de teléfono debe tener 9 dígitos (ej: 099123456)");
+
+function sanitizeUserInput(content: string): string {
+  return content
+    .replace(/\x00/g, "")
+    .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .trim()
+    .slice(0, 4096);
+}
+
+const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+
+const ANTHROPIC_TIMEOUT_MS = 30_000;
+const FALLBACK_MESSAGE =
+  "Lo siento, estoy teniendo problemas técnicos. Por favor intentá de nuevo en unos segundos.";
+
+class AnthropicTimeoutError extends Error {
+  constructor() {
+    super("Anthropic request timed out");
+    this.name = "AnthropicTimeoutError";
+  }
+}
+
+async function callAnthropic(
+  systemPrompt: string,
+  messages: MessageParam[]
+): Promise<Anthropic.Message> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+
+  try {
+    return await anthropic.messages.create(
+      {
+        model: env.AI_MODEL,
+        max_tokens: 1024,
+        system: systemPrompt,
+        tools: agentTools,
+        messages,
+      },
+      { signal: controller.signal }
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      logger.error("anthropic timeout", { timeout_ms: ANTHROPIC_TIMEOUT_MS });
+      throw new AnthropicTimeoutError();
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 interface ProcessMessageInput {
   customerPhone: string;
@@ -41,12 +98,12 @@ export interface IAgentService {
   processMessage(input: ProcessMessageInput): Promise<string>;
 }
 
-const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
 async function executeCheckAvailability(
   input: { date: string; service_name?: string },
   ctx: ToolContext
 ): Promise<string> {
+  logger.info("tool called", { tool: "check_availability", input_date: input.date, service_name: input.service_name ?? null });
   const services = ctx.business.services as unknown as Service[];
   const workingHours = ctx.business.workingHours as unknown as WorkingHour[];
 
@@ -64,12 +121,13 @@ async function executeCheckAvailability(
 
   if (useCalendar) {
     try {
-      slots = await calendarService.getAvailableSlots(
+      const calendarSlots = await calendarService.getAvailableSlots(
         ctx.business.calendarId,
         input.date,
         duration,
         workingHours
       );
+      slots = await filterCalendarSlotsAgainstDb(calendarSlots, input.date, duration, ctx);
     } catch {
       slots = await getAvailableSlotsFromDb(input.date, duration, workingHours, ctx);
     }
@@ -92,6 +150,31 @@ async function executeCheckAvailability(
   });
 }
 
+async function fetchDayAppointments(date: string, ctx: ToolContext) {
+  const [year, month, day] = date.split("-").map(Number);
+  const startOfDay = new Date(year, month - 1, day, 0, 0, 0);
+  const startOfNextDay = new Date(year, month - 1, day + 1, 0, 0, 0);
+
+  return prisma.appointment.findMany({
+    where: {
+      businessId: ctx.business.id,
+      startTime: { gte: startOfDay, lt: startOfNextDay },
+      status: { notIn: [AppointmentStatus.CANCELLED] },
+    },
+  });
+}
+
+function slotIsOccupied(
+  slotStart: Date,
+  duration: number,
+  appointments: Awaited<ReturnType<typeof fetchDayAppointments>>
+): boolean {
+  const slotEnd = new Date(slotStart.getTime() + duration * 60 * 1000);
+  return appointments.some(
+    (apt) => slotStart < apt.endTime && slotEnd > apt.startTime
+  );
+}
+
 async function getAvailableSlotsFromDb(
   date: string,
   duration: number,
@@ -99,22 +182,13 @@ async function getAvailableSlotsFromDb(
   ctx: ToolContext
 ): Promise<string[]> {
   const [year, month, day] = date.split("-").map(Number);
-  const targetDate = new Date(year, month - 1, day);
-  const dayOfWeek = targetDate.getDay();
+  const dayOfWeek = new Date(year, month - 1, day).getDay();
 
   const schedule = workingHours.find((h) => h.day === dayOfWeek);
+  logger.info("date resolution", { fn: "getAvailableSlotsFromDb", date, parsed: { year, month, day }, dayOfWeek, scheduleFound: schedule ?? null });
   if (!schedule) return [];
 
-  const startOfDay = new Date(year, month - 1, day, 0, 0, 0);
-  const endOfDay = new Date(year, month - 1, day, 23, 59, 59);
-
-  const existingAppointments = await prisma.appointment.findMany({
-    where: {
-      businessId: ctx.business.id,
-      startTime: { gte: startOfDay, lte: endOfDay },
-      status: { notIn: [AppointmentStatus.CANCELLED] },
-    },
-  });
+  const appointments = await fetchDayAppointments(date, ctx);
 
   const [startHour, startMin] = schedule.start.split(":").map(Number);
   const [endHour, endMin] = schedule.end.split(":").map(Number);
@@ -127,11 +201,7 @@ async function getAvailableSlotsFromDb(
     const slotEnd = new Date(current.getTime() + duration * 60 * 1000);
     if (slotEnd > workEnd) break;
 
-    const isOccupied = existingAppointments.some(
-      (apt) => current < apt.endTime && slotEnd > apt.startTime
-    );
-
-    if (!isOccupied) {
+    if (!slotIsOccupied(current, duration, appointments)) {
       const hh = current.getHours().toString().padStart(2, "0");
       const mm = current.getMinutes().toString().padStart(2, "0");
       slots.push(`${hh}:${mm}`);
@@ -143,6 +213,24 @@ async function getAvailableSlotsFromDb(
   return slots;
 }
 
+async function filterCalendarSlotsAgainstDb(
+  calendarSlots: string[],
+  date: string,
+  duration: number,
+  ctx: ToolContext
+): Promise<string[]> {
+  const appointments = await fetchDayAppointments(date, ctx);
+  if (appointments.length === 0) return calendarSlots;
+
+  const [year, month, day] = date.split("-").map(Number);
+
+  return calendarSlots.filter((slot) => {
+    const [hh, mm] = slot.split(":").map(Number);
+    const slotStart = new Date(year, month - 1, day, hh, mm, 0);
+    return !slotIsOccupied(slotStart, duration, appointments);
+  });
+}
+
 async function executeCreateAppointment(
   input: {
     customer_name: string;
@@ -152,6 +240,22 @@ async function executeCreateAppointment(
   },
   ctx: ToolContext
 ): Promise<string> {
+  const rawPhone = input.customer_phone;
+  const phoneAsString = String(rawPhone).trim();
+  console.log("[executeCreateAppointment] customer_phone recibido:", JSON.stringify(rawPhone), "| tipo:", typeof rawPhone, "| como string:", phoneAsString);
+  console.log("[executeCreateAppointment] regex test:", /^09\d{7}$/.test(phoneAsString), "| length:", phoneAsString.length);
+  const phoneValidation = customerPhoneSchema.safeParse(phoneAsString);
+  console.log("[executeCreateAppointment] validación Zod:", phoneValidation.success ? "OK" : phoneValidation.error.issues[0].message);
+  if (!phoneValidation.success) {
+    return JSON.stringify({
+      success: false,
+      error: phoneValidation.error.issues[0].message,
+      instruction: "DEBES informar al usuario que el teléfono es inválido y pedirle que lo corrija. NO confirmes el turno.",
+    });
+  }
+
+  const normalizedPhone = phoneAsString;
+
   const services = ctx.business.services as unknown as Service[];
 
   const service = services.find(
@@ -177,7 +281,7 @@ async function executeCreateAppointment(
         title: `${service.name} - ${input.customer_name}`,
         start: startTime,
         end: endTime,
-        description: `Turno agendado por WhatsApp. Teléfono: ${input.customer_phone}`,
+        description: `Turno agendado por WhatsApp. Teléfono: ${normalizedPhone}`,
       });
     } catch {
       // Calendar event creation failed — appointment is still saved in DB
@@ -188,7 +292,7 @@ async function executeCreateAppointment(
     data: {
       businessId: ctx.business.id,
       conversationId: ctx.conversationId,
-      customerPhone: input.customer_phone,
+      customerPhone: normalizedPhone,
       customerName: input.customer_name,
       service: service.name,
       startTime,
@@ -221,6 +325,10 @@ async function executeCancelAppointment(
   }
 
   if (appointment.businessId !== ctx.business.id) {
+    return JSON.stringify({ success: false, error: "Turno no encontrado." });
+  }
+
+  if (appointment.customerPhone !== ctx.customerPhone) {
     return JSON.stringify({ success: false, error: "Turno no encontrado." });
   }
 
@@ -411,22 +519,24 @@ export const agentService: IAgentService = {
       customerPhone
     );
 
+    const sanitizedContent = sanitizeUserInput(messageContent);
+
     await conversationService.addMessage(
       conversation.id,
       MessageRole.USER,
-      messageContent
+      sanitizedContent
     );
 
     const history = await conversationService.getHistory(conversation.id, 20);
 
-    const messages: Anthropic.MessageParam[] = history
+    const systemPrompt = buildSystemPrompt(business);
+
+    const messages: MessageParam[] = history
       .filter((m) => m.role !== MessageRole.SYSTEM)
       .map((m) => ({
-        role: m.role === MessageRole.USER ? "user" : "assistant",
-        content: m.content,
+        role: (m.role === MessageRole.USER ? "user" : "assistant") as "user" | "assistant",
+        content: sanitizeUserInput(m.content),
       }));
-
-    const systemPrompt = buildSystemPrompt(business);
 
     const ctx: ToolContext = {
       business,
@@ -437,36 +547,34 @@ export const agentService: IAgentService = {
     let responseText = "";
 
     while (true) {
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        system: systemPrompt,
-        tools: agentTools,
-        messages,
-      });
+      let response: Anthropic.Message;
+      try {
+        response = await callAnthropic(systemPrompt, messages);
+      } catch (err) {
+        if (err instanceof AnthropicTimeoutError) {
+          return FALLBACK_MESSAGE;
+        }
+        throw err;
+      }
 
       if (response.stop_reason === "end_turn") {
-        const textBlock = response.content.find(
-          (b): b is Anthropic.TextBlock => b.type === "text"
-        );
-        responseText = textBlock?.text ?? "";
+        const textBlock = response.content.find((b) => b.type === "text");
+        responseText = textBlock?.type === "text" ? textBlock.text : "";
         break;
       }
 
       if (response.stop_reason === "tool_use") {
         messages.push({ role: "assistant", content: response.content });
 
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        const toolResults: ToolResultBlockParam[] = [];
 
         for (const block of response.content) {
           if (block.type !== "tool_use") continue;
-
           const result = await executeTool(
             block.name,
             block.input as Record<string, unknown>,
             ctx
           );
-
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
