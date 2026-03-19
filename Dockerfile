@@ -29,6 +29,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
 COPY --from=builder --chown=appuser:appgroup /app/dist        ./dist
 COPY --chown=appuser:appgroup prisma  ./prisma
+COPY --chown=appuser:appgroup prisma.config.ts ./
 COPY --chown=appuser:appgroup package.json ./
 
 USER appuser
