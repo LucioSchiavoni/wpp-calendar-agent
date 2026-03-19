@@ -10,6 +10,7 @@ model Business {
   id               String         @id @default(uuid())
   name             String
   phone            String         @unique
+  whatsappPhoneNumberId   String?        @unique
   calendarId       String
   timezone         String
   welcomeMessage   String

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma.js";
 export interface IBusinessService {
   getById(id: string): Promise<Business | null>;
   getByPhone(phone: string): Promise<Business | null>;
+  getByWhatsappPhoneNumberId(phoneNumberId: string): Promise<Business | null>;
   create(data: Prisma.BusinessCreateInput): Promise<Business>;
   update(id: string, data: Prisma.BusinessUpdateInput): Promise<Business>;
   seed(): Promise<Business>;
@@ -16,6 +17,10 @@ export const businessService: IBusinessService = {
 
   async getByPhone(phone) {
     return prisma.business.findUnique({ where: { phone } });
+  },
+
+  async getByWhatsappPhoneNumberId(phoneNumberId) {
+    return prisma.business.findUnique({ where: { whatsappPhoneNumberId: phoneNumberId } });
   },
 
   async create(data) {
@@ -37,6 +42,7 @@ export const businessService: IBusinessService = {
       data: {
         name: "Clínica Demo",
         phone: "+59899000000",
+        whatsappPhoneNumberId: null,
         calendarId: "primary",
         timezone: "America/Montevideo",
         welcomeMessage:

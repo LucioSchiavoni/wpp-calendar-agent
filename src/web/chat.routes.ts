@@ -27,6 +27,7 @@ const businessParamsSchema = z.object({
 const createBusinessSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
+  whatsappPhoneNumberId: z.string().optional(),
   calendarId: z.string().min(1),
   timezone: z.string().min(1),
   welcomeMessage: z.string().min(1),

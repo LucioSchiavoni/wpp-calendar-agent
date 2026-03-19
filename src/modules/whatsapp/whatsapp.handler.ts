@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { whatsappService } from "@/modules/whatsapp/whatsapp.service.js";
 import { businessService } from "@/modules/business/business.service.js";
 import { messageQueue } from "@/queue/queue.js";
-import { env } from "@/config/env.js";
+import { logger } from "@/lib/logger.js";
 
 const phoneBuckets = new Map<string, number[]>();
 
@@ -80,11 +80,14 @@ export async function whatsappRoutes(app: FastifyInstance): Promise<void> {
 
         const { value } = change;
         if (!value.messages?.length) continue;
-        if (value.metadata.phone_number_id !== env.WHATSAPP_PHONE_NUMBER_ID) continue;
 
-        const businessPhone = value.metadata.display_phone_number.replace(/\D/g, "");
-        const business = await businessService.getByPhone(businessPhone);
-        if (!business || !business.active) continue;
+        const phoneNumberId = value.metadata.phone_number_id;
+        const business = await businessService.getByWhatsappPhoneNumberId(phoneNumberId);
+
+        if (!business || !business.active) {
+          logger.warn("no business found for phone_number_id", { phoneNumberId });
+          continue;
+        }
 
         for (const msg of value.messages) {
           if (msg.type !== "text" || !msg.text?.body) continue;
