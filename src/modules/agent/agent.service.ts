@@ -128,7 +128,8 @@ async function executeCheckAvailability(
         workingHours
       );
       slots = await filterCalendarSlotsAgainstDb(calendarSlots, input.date, duration, ctx);
-    } catch {
+       } catch (err) {
+      logger.error("calendar fetch failed, using db fallback", { error: err instanceof Error ? err.message : String(err) });
       slots = await getAvailableSlotsFromDb(input.date, duration, workingHours, ctx);
     }
   } else {
