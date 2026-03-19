@@ -16,6 +16,7 @@ interface EventInput {
   start: Date;
   end: Date;
   description?: string;
+  timezone?: string;
 }
 
 export interface ICalendarService {
@@ -187,11 +188,11 @@ export const calendarService: ICalendarService = {
     const response = await calendar.events.insert({
       calendarId,
       requestBody: {
-        summary: event.title,
-        description: event.description,
-        start: { dateTime: event.start.toISOString() },
-        end: { dateTime: event.end.toISOString() },
-      },
+  summary: event.title,
+  description: event.description,
+  start: { dateTime: event.start.toISOString(), timeZone: event.timezone ?? "America/Montevideo" },
+  end: { dateTime: event.end.toISOString(), timeZone: event.timezone ?? "America/Montevideo" },
+},
     });
 
     return response.data.id!;

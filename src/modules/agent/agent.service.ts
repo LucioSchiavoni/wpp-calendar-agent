@@ -283,6 +283,7 @@ async function executeCreateAppointment(
         start: startTime,
         end: endTime,
         description: `Turno agendado por WhatsApp. Teléfono: ${normalizedPhone}`,
+        timezone: ctx.business.timezone,
       });
     } catch {
       // Calendar event creation failed — appointment is still saved in DB
