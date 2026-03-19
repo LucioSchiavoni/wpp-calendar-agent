@@ -19,6 +19,13 @@ interface EventInput {
   timezone?: string;
 }
 
+export class SlotConflictError extends Error {
+  constructor(public readonly nextAvailableSlots: string[]) {
+    super("SLOT_CONFLICT");
+    this.name = "SlotConflictError";
+  }
+}
+
 export interface ICalendarService {
   isConfigured(): boolean;
   getAuthUrl(): string;
@@ -29,7 +36,11 @@ export interface ICalendarService {
     duration: number,
     workingHours: WorkingHour[]
   ): Promise<string[]>;
-  createEvent(calendarId: string, event: EventInput): Promise<string>;
+  createEvent(
+    calendarId: string,
+    event: EventInput,
+    workingHours?: WorkingHour[]
+  ): Promise<string>;
   deleteEvent(calendarId: string, eventId: string): Promise<void>;
 }
 
@@ -181,9 +192,50 @@ export const calendarService: ICalendarService = {
     return slots;
   },
 
-  async createEvent(calendarId: string, event: EventInput): Promise<string> {
+  async createEvent(
+    calendarId: string,
+    event: EventInput,
+    workingHours?: WorkingHour[]
+  ): Promise<string> {
     const client = await getAuthenticatedClient();
     const calendar = google.calendar({ version: "v3", auth: client });
+
+    const conflictResponse = await calendar.events.list({
+      calendarId,
+      timeMin: event.start.toISOString(),
+      timeMax: event.end.toISOString(),
+      singleEvents: true,
+      orderBy: "startTime",
+    });
+
+    const conflicts =
+      conflictResponse.data.items?.filter(
+        (e) =>
+          e.status !== "cancelled" &&
+          e.start?.dateTime &&
+          e.end?.dateTime &&
+          new Date(e.start.dateTime) < event.end &&
+          new Date(e.end.dateTime) > event.start
+      ) ?? [];
+
+    if (conflicts.length > 0) {
+      let nextSlots: string[] = [];
+
+      if (workingHours) {
+        const duration = Math.round(
+          (event.end.getTime() - event.start.getTime()) / 60000
+        );
+        const dateStr = event.start.toISOString().slice(0, 10);
+        nextSlots = await calendarService.getAvailableSlots(
+          calendarId,
+          dateStr,
+          duration,
+          workingHours
+        );
+      }
+
+      throw new SlotConflictError(nextSlots);
+    }
 
     const timezone = event.timezone ?? "America/Montevideo";
     const toNaiveLocal = (date: Date): string =>

@@ -12,7 +12,7 @@ import { conversationService } from "@/modules/conversation/conversation.service
 import { businessService } from "@/modules/business/business.service.js";
 import { agentTools } from "@/modules/agent/agent.tools.js";
 import { buildSystemPrompt } from "@/modules/agent/agent.prompt.js";
-import { calendarService } from "@/modules/calendar/calendar.service.js";
+import { calendarService, SlotConflictError } from "@/modules/calendar/calendar.service.js";
 import { logger } from "@/lib/logger.js";
 import { z } from "zod";
 
@@ -277,16 +277,35 @@ async function executeCreateAppointment(
   let googleEventId: string | undefined;
 
   if (calendarService.isConfigured() && ctx.business.calendarId) {
+    const workingHours = ctx.business.workingHours as unknown as WorkingHour[];
     try {
-      googleEventId = await calendarService.createEvent(ctx.business.calendarId, {
-        title: `${service.name} - ${input.customer_name}`,
-        start: startTime,
-        end: endTime,
-        description: `Turno agendado por WhatsApp. Teléfono: ${normalizedPhone}`,
-        timezone: ctx.business.timezone,
+      googleEventId = await calendarService.createEvent(
+        ctx.business.calendarId,
+        {
+          title: `${service.name} - ${input.customer_name}`,
+          start: startTime,
+          end: endTime,
+          description: `Turno agendado por WhatsApp. Teléfono: ${normalizedPhone}`,
+          timezone: ctx.business.timezone,
+        },
+        workingHours
+      );
+    } catch (err) {
+      if (err instanceof SlotConflictError) {
+        const nextSlots = err.nextAvailableSlots;
+        return JSON.stringify({
+          success: false,
+          error: "El horario solicitado ya no está disponible.",
+          next_available_slots: nextSlots,
+          instruction:
+            nextSlots.length > 0
+              ? `DEBES informar al usuario que ese horario ya fue tomado y ofrecer estos próximos horarios libres: ${nextSlots.join(", ")}. NO confirmes el turno.`
+              : "DEBES informar al usuario que ese horario ya fue tomado y que no hay más horarios disponibles para ese día. Ofrece otro día. NO confirmes el turno.",
+        });
+      }
+      logger.error("calendar event creation failed", {
+        error: err instanceof Error ? err.message : String(err),
       });
-    } catch {
-      // Calendar event creation failed — appointment is still saved in DB
     }
   }
 

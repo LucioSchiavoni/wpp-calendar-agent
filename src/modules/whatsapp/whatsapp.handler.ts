@@ -4,6 +4,28 @@ import { businessService } from "@/modules/business/business.service.js";
 import { transcriptionService } from "@/modules/transcription/transcription.service.js";
 import { messageQueue } from "@/queue/queue.js";
 import { logger } from "@/lib/logger.js";
+import { redis } from "@/lib/redis.js";
+
+const DAILY_LIMIT = 50;
+const DAILY_LIMIT_MESSAGE =
+  "Has alcanzado el límite de consultas por hoy. Por favor comunícate directamente con el consultorio.";
+
+async function checkDailyRateLimit(phone: string): Promise<boolean> {
+  const key = `wpp:daily:${phone}`;
+  try {
+    const count = await redis.incr(key);
+    if (count === 1) {
+      await redis.expire(key, 86400);
+    }
+    return count <= DAILY_LIMIT;
+  } catch (err) {
+    logger.warn("daily rate limit redis error, failing open", {
+      phone,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return true;
+  }
+}
 
 const phoneBuckets = new Map<string, number[]>();
 const processedMessageIds = new Map<string, number>();
@@ -121,6 +143,12 @@ export async function whatsappRoutes(app: FastifyInstance): Promise<void> {
         for (const msg of value.messages) {
           if (isDuplicateMessage(msg.id)) {
             logger.warn("webhook ignored: duplicate message id", { msgId: msg.id, from: msg.from });
+            continue;
+          }
+
+          if (!await checkDailyRateLimit(msg.from)) {
+            logger.warn("webhook blocked: daily limit exceeded", { from: msg.from });
+            await whatsappService.sendMessage(msg.from, DAILY_LIMIT_MESSAGE);
             continue;
           }
 
