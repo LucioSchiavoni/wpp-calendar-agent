@@ -19,6 +19,7 @@ const envSchema = z.object({
   WHATSAPP_APP_SECRET: z.string().min(1),
   ADMIN_API_KEY: z.string().min(32),
   GOOGLE_REFRESH_TOKEN: z.string().optional().or(z.literal("")),
+  OPENAI_API_KEY: z.string().optional().or(z.literal("")),
 });
 
 const parsed = envSchema.safeParse(process.env);

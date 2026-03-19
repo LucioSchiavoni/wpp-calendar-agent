@@ -185,14 +185,18 @@ export const calendarService: ICalendarService = {
     const client = await getAuthenticatedClient();
     const calendar = google.calendar({ version: "v3", auth: client });
 
+    const timezone = event.timezone ?? "America/Montevideo";
+    const toNaiveLocal = (date: Date): string =>
+      date.toISOString().slice(0, 19);
+
     const response = await calendar.events.insert({
       calendarId,
       requestBody: {
-  summary: event.title,
-  description: event.description,
-  start: { dateTime: event.start.toISOString(), timeZone: event.timezone ?? "America/Montevideo" },
-  end: { dateTime: event.end.toISOString(), timeZone: event.timezone ?? "America/Montevideo" },
-},
+        summary: event.title,
+        description: event.description,
+        start: { dateTime: toNaiveLocal(event.start), timeZone: timezone },
+        end: { dateTime: toNaiveLocal(event.end), timeZone: timezone },
+      },
     });
 
     return response.data.id!;
