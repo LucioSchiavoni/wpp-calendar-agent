@@ -8,7 +8,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional().or(z.literal("")),
   GOOGLE_CLIENT_SECRET: z.string().optional().or(z.literal("")),
   GOOGLE_REDIRECT_URI: z.string().url().optional().or(z.literal("")),
-  PORT: z.coerce.number().int().positive().default(3000),
+  PORT: z.coerce.number().int().positive().default(8080),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_WINDOW: z.coerce.number().int().positive().default(60000),
